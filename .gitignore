@@ -1,0 +1,3 @@
+proxy-file.json
+*.json
+reviews_finder/__pycache__/
