@@ -1,0 +1,31 @@
+# systemd unit that manages the docker-compose stack (API + Postgres).
+#
+# Strictly optional -- the compose services already have
+# `restart: unless-stopped`, so they come back after a reboot as long as the
+# Docker daemon is enabled (`sudo systemctl enable docker`). This unit adds
+# explicit start/stop/status control and ties the stack to boot cleanly.
+#
+# 1. Adjust WorkingDirectory to where you cloned the repo.
+# 2. Install:  sudo cp deploy/reviews-finder.service /etc/systemd/system/
+# 3. Enable:   sudo systemctl daemon-reload
+#              sudo systemctl enable --now reviews-finder
+# 4. Manage:   sudo systemctl status|restart reviews-finder
+#              journalctl -u reviews-finder -f
+
+[Unit]
+Description=reviews-finder API (docker compose)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/reviews-finder
+ExecStart=/usr/bin/docker compose up -d --remove-orphans
+ExecStop=/usr/bin/docker compose down
+# Re-runs "up -d" on restart, which recreates only changed containers.
+ExecReload=/usr/bin/docker compose up -d --remove-orphans
+
+[Install]
+WantedBy=multi-user.target

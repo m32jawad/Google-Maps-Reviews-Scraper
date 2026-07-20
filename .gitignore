@@ -1,3 +1,9 @@
 proxy-file.json
 *.json
+__pycache__/
 reviews_finder/__pycache__/
+server/__pycache__/
+.env
+runs.db
+runs.db-*
+out/

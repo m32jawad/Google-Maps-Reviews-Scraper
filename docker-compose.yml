@@ -1,0 +1,49 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: reviews
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: reviews_finder
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reviews -d reviews_finder"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    image: reviews-finder:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      API_TOKEN: ${API_TOKEN:?set API_TOKEN in .env}
+      DATABASE_URL: postgresql+psycopg2://reviews:${POSTGRES_PASSWORD}@db:5432/reviews_finder
+      # Workers are sibling containers on the same network -> same URL works.
+      WORKER_DATABASE_URL: postgresql+psycopg2://reviews:${POSTGRES_PASSWORD}@db:5432/reviews_finder
+      EXECUTOR: docker
+      WORKER_IMAGE: reviews-finder:latest
+      WORKER_NETWORK: reviews-finder-net
+      MAX_CONCURRENT_WORKERS: ${MAX_CONCURRENT_WORKERS:-2}
+      DEFAULT_MEMORY_MB: ${DEFAULT_MEMORY_MB:-512}
+      MAX_MEMORY_MB: ${MAX_MEMORY_MB:-2048}
+      WORKER_CPUS: ${WORKER_CPUS:-1.0}
+      DEFAULT_TIMEOUT_SECS: ${DEFAULT_TIMEOUT_SECS:-3600}
+      DEFAULT_PROXY_URLS: ${DEFAULT_PROXY_URLS:-}
+    volumes:
+      # Lets the API launch sibling worker containers on the host daemon.
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "${API_PORT:-8000}:8000"
+
+volumes:
+  pgdata:
+
+networks:
+  default:
+    name: reviews-finder-net

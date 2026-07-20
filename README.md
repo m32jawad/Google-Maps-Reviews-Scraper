@@ -6,6 +6,10 @@ over plain HTTPS (no browser, no API key, no third-party service). It can also
 **find all places** for a city + categories, with full business details
 (see [Finding places](#finding-places-city--categories) below).
 
+It also ships as a **self-hosted run API** (Apify-style: submit → run id →
+poll → fetch results) with one Docker container per run, RAM/CPU caps and a
+shared Postgres — see [SERVER_SETUP.md](SERVER_SETUP.md).
+
 ## How it works
 
 When you open a place on Google Maps and scroll the reviews panel, the page
