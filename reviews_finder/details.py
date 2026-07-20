@@ -129,6 +129,45 @@ def _fetch_once(session, feature_id, hl, gl, timeout, proxy_pool):
     return json.loads(body)
 
 
+def parse_place_node(node, feature_id=None, place_id=None):
+    """Decode one raw place node into a details dict.
+
+    The same protobuf-over-JSON node appears in the /maps/preview/place
+    response (at [6]) and in each /search?tbm=map result entry (at [14]);
+    the field indexes are identical, so both call this.
+    """
+    if not isinstance(node, list):
+        return None
+    street, locality, country = (list(_get(node, 2) or []) + [None, None, None])[:3]
+    return {
+        "name": _str(_get(node, 11)),
+        "place_id": place_id,
+        "feature_id": _str(_get(node, 10)) or feature_id,
+        "address": _str(_get(node, 39)),
+        "address_components": {
+            "street": _str(street),
+            "locality": _str(locality),
+            "country": _str(country),
+        },
+        "phone": _str(_get(node, 178, 0, 0)),
+        "phone_e164": _str(_get(node, 178, 0, 3)),
+        "website": _str(_get(node, 7, 0)),
+        "website_domain": _str(_get(node, 7, 1)),
+        "categories": [c for c in (_get(node, 13) or []) if isinstance(c, str)],
+        "latitude": _get(node, 9, 2),
+        "longitude": _get(node, 9, 3),
+        "timezone": _str(_get(node, 30)),
+        # Google's own figures across ALL reviews -- the basis for rating maths.
+        "rating": _get(node, 4, 7),
+        "total_reviews": _get(node, 4, 8),
+        "reviews_distribution": _parse_distribution(node),
+        "reviews_url": _str(_get(node, 4, 3, 0)),
+        "opening_hours": _parse_hours(node),
+        "maps_url": f"https://www.google.com/maps/place/?q=place_id:{place_id}"
+                    if place_id else None,
+    }
+
+
 def fetch_place_details(feature_id, hl="en", gl="us", session=None, timeout=30,
                         proxy_pool=None, count_attempts=6):
     """Return a dict of business details for a feature id (0x..:0x..).
@@ -154,37 +193,6 @@ def fetch_place_details(feature_id, hl="en", gl="us", session=None, timeout=30,
 
     if data is None:
         return None
-    node = _get(data, 6)
-    if not isinstance(node, list):
-        return None
-
-    street, locality, country = (list(_get(node, 2) or []) + [None, None, None])[:3]
     place_id_match = PLACE_ID_RE.search(json.dumps(data))
-
-    return {
-        "name": _str(_get(node, 11)),
-        "place_id": place_id_match.group(1) if place_id_match else None,
-        "feature_id": _str(_get(node, 10)) or feature_id,
-        "address": _str(_get(node, 39)),
-        "address_components": {
-            "street": _str(street),
-            "locality": _str(locality),
-            "country": _str(country),
-        },
-        "phone": _str(_get(node, 178, 0, 0)),
-        "phone_e164": _str(_get(node, 178, 0, 3)),
-        "website": _str(_get(node, 7, 0)),
-        "website_domain": _str(_get(node, 7, 1)),
-        "categories": [c for c in (_get(node, 13) or []) if isinstance(c, str)],
-        "latitude": _get(node, 9, 2),
-        "longitude": _get(node, 9, 3),
-        "timezone": _str(_get(node, 30)),
-        # Google's own figures across ALL reviews -- the basis for rating maths.
-        "rating": _get(node, 4, 7),
-        "total_reviews": _get(node, 4, 8),
-        "reviews_distribution": _parse_distribution(node),
-        "reviews_url": _str(_get(node, 4, 3, 0)),
-        "opening_hours": _parse_hours(node),
-        "maps_url": f"https://www.google.com/maps/place/?q=place_id:{place_id_match.group(1)}"
-                    if place_id_match else None,
-    }
+    return parse_place_node(_get(data, 6), feature_id=feature_id,
+                            place_id=place_id_match.group(1) if place_id_match else None)

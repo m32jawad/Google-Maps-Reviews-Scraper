@@ -2,7 +2,9 @@
 
 Self-hosted Google Maps review scraper — a drop-in replacement for the Apify
 reviews actor. Pass any Google place reference and it fetches **all** reviews
-over plain HTTPS (no browser, no API key, no third-party service).
+over plain HTTPS (no browser, no API key, no third-party service). It can also
+**find all places** for a city + categories, with full business details
+(see [Finding places](#finding-places-city--categories) below).
 
 ## How it works
 
@@ -66,6 +68,75 @@ result = scrape_reviews(
 print(result["review_count"], result["feature_id"])
 for r in result["reviews"]:
     print(r["rating"], r["author"]["name"], r["published_at"], (r["text"] or "")[:80])
+```
+
+## Finding places (city + categories)
+
+`find.py` discovers **all places** for a city across one or more categories and
+returns each place's business details (no reviews) — same fields as
+`place_details` below:
+
+```
+python find.py "<city>" --categories "cat1,cat2,..." [--max N] [--out places.json] [--hl en] [--gl us] [--delay 0.3] [--fast] [--workers 4] [--proxy URL ...] [--proxy-file proxies.txt]
+```
+
+Examples:
+
+```
+python find.py "Berlin" --categories restaurant
+python find.py "Berlin, Germany" --categories "dentist,orthodontist" --gl de --out berlin-dentists.json
+python find.py "Munich" --categories cafe --fast        # search data only, much faster
+```
+
+Library:
+
+```python
+from reviews_finder import find_places, search_places
+
+result = find_places("Berlin", ["restaurant", "cafe"], details=True, workers=4)
+for p in result["places"]:
+    print(p["name"], p["rating"], p["total_reviews"], p["address"], p["search_categories"])
+
+# or a single raw query, search data only:
+places = search_places("dentist in Munich")
+```
+
+How it works: each category becomes a `"<category> in <city>"` query against
+Google's internal `/search?tbm=map` RPC — the same request the Maps frontend
+sends while you scroll the results panel — paged 20 at a time via the `!8i`
+offset until the stream ends. Each result carries a full place node with the
+**same field layout** as the details endpoint, so name, address, phone,
+website, coordinates, categories, rating and opening hours come straight from
+the search (one request per 20 places).
+
+Facts about this endpoint, verified live:
+
+- **Google caps one query at ~200–300 places.** "restaurants in Berlin" ends
+  after ~230 even though Berlin has thousands. For wider coverage, split into
+  narrower categories (`"pizza restaurant,italian restaurant,..."`) or
+  city districts (`"restaurant in Kreuzberg, Berlin"`) — results are deduped
+  by feature id across queries, and each place records which categories found
+  it under `search_categories`.
+- **The end of the stream is an empty page**; out-of-range offsets silently
+  wrap around to page 0 (guarded by the dedupe).
+- **Search results never include `total_reviews` or the histogram** — Google
+  cuts those from the search node. By default every found place is therefore
+  enriched with one `fetch_place_details` call (a few requests per place, on
+  `--workers` threads). `--fast` skips this: you keep `rating` but
+  `total_reviews`/`reviews_distribution` stay `null` — fine for building a
+  place list, not enough for rating maths.
+- **Opening hours are richer in search than in details** (full week vs.
+  current day); the merge keeps the richer one.
+
+Output shape:
+
+```json
+{
+  "city": "Berlin",
+  "categories": ["restaurant", "cafe"],
+  "place_count": 412,
+  "places": [ { ...same fields as place_details..., "search_categories": ["restaurant"] } ]
+}
 ```
 
 ## Business details & rating distribution
