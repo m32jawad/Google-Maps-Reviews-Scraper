@@ -34,7 +34,7 @@ pip install -r requirements.txt
 ## CLI usage
 
 ```
-python main.py "<place>" [--sort newest|relevant|highest|lowest] [--max N] [--out file.json] [--hl en] [--delay 0.3] [--raw] [--proxy URL ...] [--proxy-file proxies.txt] [--resume]
+python main.py "<place>" [--sort newest|relevant|highest|lowest] [--max N] [--out file.json] [--hl en] [--delay 0.3] [--raw] [--proxy URL ...] [--proxy-file proxies.txt] [--resume] [--ratings 1,2] [--details-only] [--no-details]
 ```
 
 `<place>` accepts any of:
@@ -67,6 +67,90 @@ print(result["review_count"], result["feature_id"])
 for r in result["reviews"]:
     print(r["rating"], r["author"]["name"], r["published_at"], (r["text"] or "")[:80])
 ```
+
+## Business details & rating distribution
+
+Every run also returns `place_details` (one extra request, skip with
+`--no-details`) and a `rating_distribution` computed from the fetched reviews.
+For details without scraping reviews at all, use `--details-only`.
+
+```json
+"place_details": {
+  "name": "McDonald's",
+  "place_id": "ChIJBUVXPv5QqEcRGlvQnGYFiUg",
+  "feature_id": "0x47a850fe3e574505:0x488905669cd05b1a",
+  "address": "Hardenbergpl. 11, 10623 Berlin, Germany",
+  "address_components": {"street": "…", "locality": "10623 Berlin", "country": "Germany"},
+  "phone": "+49 30 30827833",
+  "phone_e164": "+493030827833",
+  "website": "https://…",
+  "website_domain": "mcdonalds.com",
+  "categories": ["Fast food restaurant"],
+  "latitude": 52.5070151, "longitude": 13.332541,
+  "timezone": "Europe/Berlin",
+  "rating": 3.6,             // Google's live rating, across ALL reviews
+  "total_reviews": 6315,     // Google's live count, across ALL reviews
+  "reviews_distribution": {  // Google's OWN histogram — the 5 bars in the UI
+    "counts": {"1": 946, "2": 464, "3": 1094, "4": 1556, "5": 2255},
+    "total": 6315,
+    "average": 3.59
+  },
+  "reviews_url": "https://search.google.com/local/reviews?placeid=ChIJ…",
+  "opening_hours": {"Monday": ["Open 24 hours"]},
+  "maps_url": "https://www.google.com/maps/place/?q=place_id:ChIJ…"
+},
+"rating_distribution": {
+  "counts": {"1": 22, "2": 12, "3": 30, "4": 61, "5": 175},
+  "scraped": 300,            // reviews this run measured
+  "average": 4.18,
+  "total_reviews": 13460,    // Google's real total
+  "coverage": 0.0223         // scraped / total -> how complete the breakdown is
+}
+```
+
+`rating`, `total_reviews` and `reviews_distribution` are Google's own live
+figures for the **whole place** — the exact numbers behind the 5 bars in the
+Maps UI — and are fetched without scraping a single review. Verified against
+Apify's `reviewsDistribution` for the same place: identical
+(223/11/43/112/582 on Google Berlin), and each histogram sums exactly to
+`total_reviews` across all places tested.
+
+Do not confuse it with the separate top-level `rating_distribution`, which
+only describes the reviews this run happened to scrape.
+
+### Rating impact of deleting reviews
+
+```python
+from reviews_finder import fetch_place_details, projected_rating
+
+d = fetch_place_details("0x47a851c4adb5e545:0x91a95da0b8c28d69")
+projected_rating(d, [1] * 100)          # remove 100 one-star reviews
+# {'current_rating': 3.84, 'current_total': 971, 'deleted_count': 100,
+#  'new_rating': 4.17, 'new_total': 871, 'delta': 0.33,
+#  'new_distribution': {1: 123, 2: 11, 3: 43, 4: 112, 5: 582}, 'exact': True}
+```
+
+`exact: True` means it was computed from Google's real histogram rather than
+the rounded published rating, and `new_distribution` gives the bars the place
+would show afterwards — useful for quoting the outcome to a client up front.
+
+Caveats, all verified against the live endpoint:
+
+- **The full pb matters.** `total_reviews` and `reviews_distribution` come
+  back only for the complete field mask in `PB_TEMPLATE`, captured verbatim
+  from a real browser session. Hand-trimmed masks silently return a place node
+  with both fields null — which is why several published scrapers report the
+  histogram as "no longer available". Do not shorten it.
+- **Both fields also need a warmed session and a retry.** Google serves the
+  full response non-deterministically, and only to a session that has already
+  loaded google.com/maps. `fetch_place_details` warms a fresh session per
+  attempt and retries up to 6 times (measured 6/6 success across three
+  places), costing a few extra requests and a few seconds. No browser is
+  needed at runtime.
+- **No email.** Google Maps stores no email address for a business — it is in
+  no response. Follow `website` (e.g. an Impressum/contact page) for that.
+- **`opening_hours` usually holds only the current day** — that is all this
+  endpoint returns; some places (hotels) return none at all.
 
 ## Output shape
 

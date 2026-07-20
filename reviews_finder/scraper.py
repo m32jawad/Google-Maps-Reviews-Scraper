@@ -3,9 +3,82 @@ import json
 import os
 import time
 
+from .details import fetch_place_details
 from .fetcher import ProxyPool, SORT_ORDERS, fetch_page, make_review_session
 from .parser import parse_review
 from .resolver import resolve_feature_id
+
+
+def rating_distribution(reviews, total_reviews=None):
+    """Per-star counts over the *scraped* reviews.
+
+    For the place's real breakdown use
+    place_details["reviews_distribution"], which is Google's own histogram.
+    This one describes only the sample fetched; `coverage` says what fraction
+    of the place that is.
+    """
+    counts = {star: 0 for star in range(1, 6)}
+    for r in reviews:
+        if r.get("rating") in counts:
+            counts[r["rating"]] += 1
+    scraped = sum(counts.values())
+    average = round(sum(s * c for s, c in counts.items()) / scraped, 2) if scraped else None
+    coverage = round(scraped / total_reviews, 4) if total_reviews else None
+    return {
+        "counts": counts,
+        "scraped": scraped,
+        "average": average,
+        "total_reviews": total_reviews,
+        "coverage": coverage,
+    }
+
+
+def projected_rating(place_details, deleted_ratings):
+    """What the place's rating becomes once `deleted_ratings` are removed.
+
+    Works off Google's own distribution when available (exact), falling back
+    to rating x total. Pass the `place_details` dict from a scrape, or any
+    dict/mapping with `rating`, `total_reviews` and optional
+    `reviews_distribution`.
+
+    deleted_ratings -- iterable of star values being removed, e.g. [1, 1, 2]
+    """
+    if not isinstance(place_details, dict):
+        return None
+    rating = place_details.get("rating")
+    total = place_details.get("total_reviews")
+    dist = (place_details.get("reviews_distribution") or {}).get("counts")
+    deleted = [int(r) for r in deleted_ratings if isinstance(r, (int, float))]
+    if not rating or not total:
+        return None
+    remaining = total - len(deleted)
+    if remaining <= 0:
+        return None
+
+    if dist:
+        # Exact: rebuild the star total from the real histogram.
+        star_sum = sum(int(s) * c for s, c in dist.items())
+        new_counts = {int(s): c for s, c in dist.items()}
+        for star in deleted:
+            if star in new_counts:
+                new_counts[star] = max(0, new_counts[star] - 1)
+        exact = True
+    else:
+        star_sum = rating * total
+        new_counts = None
+        exact = False
+
+    new_rating = (star_sum - sum(deleted)) / remaining
+    return {
+        "current_rating": round(star_sum / total, 2),
+        "current_total": total,
+        "deleted_count": len(deleted),
+        "new_rating": round(new_rating, 2),
+        "new_total": remaining,
+        "delta": round(new_rating - star_sum / total, 2),
+        "new_distribution": new_counts,
+        "exact": exact,
+    }
 
 
 def _checkpoint_paths(base):
@@ -54,7 +127,7 @@ def _save_state(state_path, feature_id, sort, ratings_key, next_token, page):
 
 def scrape_reviews(place, sort="newest", max_reviews=None, hl="en",
                    delay=0.3, raw=False, on_progress=None, proxies=None,
-                   checkpoint=None, resume=False, ratings=None):
+                   checkpoint=None, resume=False, ratings=None, details=True):
     """Scrape reviews for a Google Maps place.
 
     place       -- place URL, maps.app.goo.gl link, ChIJ.. place id, or 0x..:0x.. feature id
@@ -74,6 +147,7 @@ def scrape_reviews(place, sort="newest", max_reviews=None, hl="en",
                    still traversed (Google can't filter server-side); use
                    sort="newest" with this for a complete low-star set, since
                    rating-sorted views are capped by Google at ~800 reviews
+    details     -- also fetch business details (address, phone, website, ...)
     """
     ratings = set(ratings) if ratings else None
     ratings_key = sorted(ratings) if ratings else None
@@ -84,12 +158,23 @@ def scrape_reviews(place, sort="newest", max_reviews=None, hl="en",
     session = make_review_session()
     proxy_pool = ProxyPool(proxies)
 
+    place_details = None
+    if details:
+        try:
+            place_details = fetch_place_details(
+                feature_id, hl=hl, session=session, proxy_pool=proxy_pool or None)
+            if place_details and place_details.get("name"):
+                place_name = place_details["name"]
+        except Exception:  # details are a bonus; never fail the review scrape
+            place_details = None
+
     reviews = []
     seen_ids = set()
     token = ""
     page_num = 0
     stopped_reason = None
     no_new_pages = 0
+    skip_reviews = max_reviews == 0  # details-only run
 
     partial_path = state_path = partial_file = None
     if checkpoint:
@@ -103,7 +188,7 @@ def scrape_reviews(place, sort="newest", max_reviews=None, hl="en",
         partial_file = open(partial_path, "a" if resume else "w", encoding="utf-8")
 
     try:
-        while True:
+        while not skip_reviews:
             page_num += 1
             if proxy_pool:
                 proxy_pool.rotate()  # spread pages across the pool
@@ -174,6 +259,9 @@ def scrape_reviews(place, sort="newest", max_reviews=None, hl="en",
         "sort": sort,
         "complete": complete,
         "stopped_reason": stopped_reason,
+        "place_details": place_details,
+        "rating_distribution": rating_distribution(
+            reviews, (place_details or {}).get("total_reviews")),
         "review_count": len(reviews),
         "reviews": reviews,
     }

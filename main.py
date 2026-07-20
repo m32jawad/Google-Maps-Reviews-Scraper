@@ -32,6 +32,10 @@ def main():
                     help="Continue an interrupted run from <out>.partial.jsonl / <out>.state.json")
     ap.add_argument("--ratings", help="Keep only these star ratings, comma-separated, e.g. 1,2 "
                                       "(use with --sort newest for a complete set)")
+    ap.add_argument("--no-details", action="store_true",
+                    help="Skip the business-details lookup (address, phone, website)")
+    ap.add_argument("--details-only", action="store_true",
+                    help="Fetch only business details, no reviews")
     args = ap.parse_args()
 
     ratings = None
@@ -49,10 +53,11 @@ def main():
         print(f"  page {page}: {count} reviews fetched", file=sys.stderr)
 
     result = scrape_reviews(
-        args.place, sort=args.sort, max_reviews=args.max,
+        args.place, sort=args.sort, max_reviews=0 if args.details_only else args.max,
         hl=args.hl, delay=args.delay, raw=args.raw, on_progress=progress,
         proxies=proxies or None,
-        checkpoint=args.out, resume=args.resume, ratings=ratings,
+        checkpoint=None if args.details_only else args.out,
+        resume=args.resume, ratings=ratings, details=not args.no_details,
     )
 
     with open(args.out, "w", encoding="utf-8") as f:
