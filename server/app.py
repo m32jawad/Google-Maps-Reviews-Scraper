@@ -10,10 +10,15 @@
   GET    /health                liveness + queue stats (no auth)
 
 Auth: set API_TOKEN and send  Authorization: Bearer <token>  (or ?token=).
+
+A browser console for all of the above is served at  /  (see static/index.html).
 """
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 
 from . import settings
@@ -63,6 +68,7 @@ def health():
         counts = {s: db.query(Run).filter(Run.status == s).count()
                   for s in ("QUEUED", "RUNNING")}
     return {"status": "ok", "executor": settings.EXECUTOR,
+            "auth_required": bool(settings.API_TOKEN),
             "max_concurrent_workers": settings.MAX_CONCURRENT_WORKERS, **counts}
 
 
@@ -141,3 +147,18 @@ def delete_run(run_id: str, db=Depends(get_db)):
     db.delete(run)
     db.commit()
     return {"deleted": run_id}
+
+
+# --- browser console -------------------------------------------------------
+# Mounted last so it never shadows an API route. The page itself is public;
+# every call it makes goes through the same token auth as the API.
+STATIC_DIR = Path(__file__).parent / "static"
+
+
+@app.get("/", include_in_schema=False)
+def index():
+    return RedirectResponse("/ui/")
+
+
+if STATIC_DIR.is_dir():
+    app.mount("/ui", StaticFiles(directory=STATIC_DIR, html=True), name="ui")

@@ -27,10 +27,32 @@ The scheduler also detects workers that die without reporting back — e.g.
 killed by the RAM cap — and marks them `FAILED` with the container's last log
 lines in `error`.
 
+## Browser console
+
+Open the server root (`http://localhost:8000/`) and you get a small web UI —
+the same thing the API does, without curl:
+
+- **API token** field in the header, kept in `localStorage` (per browser).
+  Leave it empty when `API_TOKEN` is unset. The header shows whether the
+  server currently requires one.
+- **Reviews scraper / Places scraper** tabs, each with the full input form
+  (sort, max, star filter, language, delay, proxies, details toggle).
+- **Runs table**, auto-refreshing every 2.5s: status badge, live progress
+  (`40 reviews · page 1`, `details · <place> · 4`), plus Abort / Delete.
+- **Results panel** — click *View* on a succeeded run to render the records
+  in-page: for reviews, the business details and Google's own star histogram
+  above the review table; for places, one row per business.
+- **Download JSON** for the full result, and an optional *auto-download when
+  a run finishes* checkbox (only fires for runs that finish while the page is
+  open, so it never dumps your whole history on load).
+
+The page is plain static HTML served from `server/static/` — no build step, no
+CDN — and every call it makes goes through the same token auth as the API.
+
 ## API
 
 Auth: every `/v1/*` request needs `Authorization: Bearer <API_TOKEN>`
-(or `?token=<API_TOKEN>`). `/health` is open.
+(or `?token=<API_TOKEN>`). `/health` and the console page itself are open.
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -41,7 +63,8 @@ Auth: every `/v1/*` request needs `Authorization: Bearer <API_TOKEN>`
 | GET | `/v1/runs/{id}/results` | full result JSON (SUCCEEDED only) |
 | GET | `/v1/runs/{id}/items` | just the reviews/places array, `?offset=&limit=` |
 | DELETE | `/v1/runs/{id}` | delete a finished run (results live in the DB — clean up periodically) |
-| GET | `/health` | liveness + queue counts |
+| GET | `/health` | liveness + queue counts + `auth_required` |
+| GET | `/` | browser console (redirects to `/ui/`) |
 
 Interactive docs at `/docs` (Swagger UI).
 
@@ -180,17 +203,29 @@ EXECUTOR=subprocess API_TOKEN=dev python -m uvicorn server.app:app --port 8000
 defaults to SQLite (`runs.db`) — no isolation or RAM caps, but the whole API
 flow works for testing. This is exactly how the test suite exercised it.
 
-## mapnovi-web integration (next step)
+## mapnovi-web integration (done)
 
-Replace the Apify client with three calls from the Django backend:
+mapnovi-web talks to this API from `backend/api/custom_scraper.py`. It is a
+**partial** swap by design: only the REVIEW run moves here — the place
+resolve/stats run stays on Apify, because it supplies the business name,
+address and the 1–5★ distribution the review run is sized from.
 
-1. `POST /v1/runs` with `{"actor": "reviews", "input": {"place": <maps url>}}`
-   → store `run["id"]` where the Apify run id lived.
-2. Poll `GET /v1/runs/{id}` (status names match Apify's:
-   `SUCCEEDED`/`FAILED`/`TIMED_OUT`/`ABORTED`).
-3. On `SUCCEEDED`, `GET /v1/runs/{id}/items` → review objects
-   (`review_id`, `rating`, `text`, `published_at`, `author`, ... — see the
-   README's output shape).
+Turn it on under **Admin → Konfiguration → "Eigener Scraper (reviews-finder)"**
+(also in the Django admin): tick the box, set the API URL and paste the
+`API_TOKEN`. All three are required — with anything missing mapnovi silently
+keeps using Apify, so the switch is safe to flip back at any time.
 
-Keep the token in Django settings/AppConfig (server-side only), never in the
-Next.js frontend.
+What happens per extraction:
+
+1. Apify stats run resolves the place → name, address, rating, star counts.
+2. The deletable 1–3★ count sizes the review run, which is sent here as
+   `POST /v1/runs` with `ratings: [1,2,3]` and a sort chosen from that count:
+   `lowest` (fast) up to ~700, else `newest` (walks the full history, since
+   Google caps rating-sorted pagination at ~800).
+3. The funnel polls `GET /v1/runs/{id}`; when it reports `SUCCEEDED` the
+   backend fetches `/results` and maps each review into the same dict the
+   Apify path produced. Run ids are prefixed `cs-` so poll/abort route to the
+   right backend, and the funnel's abort-on-leave hits `/abort` here.
+
+The token lives encrypted in `AppConfig` (server-side only) and is never sent
+to the Next.js frontend.

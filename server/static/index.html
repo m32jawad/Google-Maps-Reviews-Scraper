@@ -1,0 +1,556 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>reviews-finder console</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #fff; --ink: #16181d; --muted: #6b7280;
+    --line: #e3e6ea; --accent: #2563eb; --accent-ink: #fff;
+    --ok: #067647; --ok-bg: #ecfdf3; --err: #b42318; --err-bg: #fef3f2;
+    --warn: #b54708; --warn-bg: #fffaeb; --run: #175cd3; --run-bg: #eff8ff;
+    --idle: #475467; --idle-bg: #f2f4f7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --panel: #161a21; --ink: #e6e8ec; --muted: #9aa3b2;
+      --line: #262c36; --accent: #3b82f6;
+      --ok: #75e0a7; --ok-bg: #053321; --err: #fda29b; --err-bg: #55160c;
+      --warn: #fec84b; --warn-bg: #4e1d09; --run: #84caff; --run-bg: #102a56;
+      --idle: #cdd3dd; --idle-bg: #222831;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--line);
+    position: sticky; top: 0; z-index: 10;
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 650; letter-spacing: -.01em; }
+  header .spacer { flex: 1; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 20px; display: grid; gap: 20px; }
+  @media (min-width: 1000px) { .wrap { grid-template-columns: 380px 1fr; align-items: start; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  .card > h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted);
+    margin: 0; padding: 12px 16px; border-bottom: 1px solid var(--line); font-weight: 600;
+  }
+  .card > .body { padding: 16px; }
+  label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin: 12px 0 4px; }
+  label:first-child { margin-top: 0; }
+  input, select, textarea, button {
+    font: inherit; color: inherit; border-radius: 7px; border: 1px solid var(--line);
+    background: var(--bg); padding: 7px 9px; width: 100%;
+  }
+  textarea { resize: vertical; min-height: 56px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+  input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .row { display: flex; gap: 10px; }
+  .row > div { flex: 1; }
+  .check { display: flex; align-items: center; gap: 7px; margin-top: 10px; font-size: 13px; }
+  .check input { width: auto; }
+  .stars { display: flex; gap: 6px; flex-wrap: wrap; }
+  .stars label {
+    margin: 0; display: flex; align-items: center; gap: 5px; padding: 5px 9px;
+    border: 1px solid var(--line); border-radius: 7px; cursor: pointer; font-size: 13px; color: var(--ink);
+  }
+  .stars input { width: auto; }
+  button.primary {
+    background: var(--accent); color: var(--accent-ink); border-color: transparent;
+    font-weight: 600; cursor: pointer; padding: 9px; margin-top: 16px;
+  }
+  button.primary:disabled { opacity: .55; cursor: not-allowed; }
+  button.mini {
+    width: auto; padding: 4px 9px; font-size: 12px; cursor: pointer; background: var(--panel);
+  }
+  button.mini:hover { border-color: var(--accent); color: var(--accent); }
+  .tabs { display: flex; gap: 6px; padding: 12px 16px 0; }
+  .tabs button {
+    width: auto; flex: 1; cursor: pointer; background: var(--bg); font-weight: 600; font-size: 13px;
+  }
+  .tabs button[aria-selected="true"] { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th {
+    text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--muted); padding: 8px 12px; border-bottom: 1px solid var(--line); font-weight: 600;
+  }
+  td { padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tbody tr:last-child td { border-bottom: 0; }
+  tr.sel { background: var(--run-bg); }
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px;
+    font-weight: 700; letter-spacing: .02em;
+  }
+  .b-SUCCEEDED { color: var(--ok); background: var(--ok-bg); }
+  .b-FAILED, .b-TIMED_OUT { color: var(--err); background: var(--err-bg); }
+  .b-RUNNING { color: var(--run); background: var(--run-bg); }
+  .b-ABORTING { color: var(--warn); background: var(--warn-bg); }
+  .b-QUEUED, .b-ABORTED { color: var(--idle); background: var(--idle-bg); }
+  .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+  .muted { color: var(--muted); }
+  .empty { padding: 28px 16px; text-align: center; color: var(--muted); }
+  .msg { padding: 9px 12px; border-radius: 7px; font-size: 13px; margin-top: 12px; display: none; }
+  .msg.err { display: block; color: var(--err); background: var(--err-bg); }
+  .msg.ok { display: block; color: var(--ok); background: var(--ok-bg); }
+  .toolbar { display: flex; gap: 8px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .scroll { max-height: 560px; overflow: auto; }
+  .clip { max-width: 460px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 13px; }
+  .kv dt { color: var(--muted); }
+  .kv dd { margin: 0; }
+  .bars { display: grid; gap: 3px; margin-top: 10px; max-width: 320px; }
+  .bar { display: grid; grid-template-columns: 14px 1fr auto; gap: 8px; align-items: center; font-size: 12px; }
+  .bar .track { background: var(--idle-bg); border-radius: 3px; height: 9px; overflow: hidden; }
+  /* display:block matters — an inline span ignores width/height and the bar renders empty */
+  .bar .fill { display: block; background: #fbbf24; height: 100%; border-radius: 3px; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>reviews-finder</h1>
+  <span id="health" class="muted" style="font-size:12px">
+    <span class="dot" style="background:var(--idle)"></span> connecting…
+  </span>
+  <span class="spacer"></span>
+  <label for="token" style="margin:0">API token</label>
+  <input id="token" type="password" placeholder="leave empty if auth is off"
+         style="width:230px" autocomplete="off">
+  <button class="mini" id="saveToken">Save</button>
+</header>
+
+<div class="wrap">
+
+  <!-- ── new run ─────────────────────────────────────────── -->
+  <section class="card">
+    <h2>New run</h2>
+    <div class="tabs" role="tablist">
+      <button role="tab" id="tab-reviews" aria-selected="true">Reviews scraper</button>
+      <button role="tab" id="tab-places" aria-selected="false">Places scraper</button>
+    </div>
+    <div class="body">
+      <form id="form">
+        <!-- reviews -->
+        <div data-actor="reviews">
+          <label for="place">Place</label>
+          <input id="place" placeholder="URL, maps.app.goo.gl link, ChIJ… or 0x…:0x…">
+          <div class="row">
+            <div>
+              <label for="sort">Sort</label>
+              <select id="sort">
+                <option value="newest">newest (walks all reviews)</option>
+                <option value="relevant">relevant</option>
+                <option value="highest">highest</option>
+                <option value="lowest">lowest</option>
+              </select>
+            </div>
+            <div>
+              <label for="max_reviews">Max reviews</label>
+              <input id="max_reviews" type="number" min="0" placeholder="all">
+            </div>
+          </div>
+          <label>Keep only ratings</label>
+          <div class="stars">
+            <label><input type="checkbox" class="star" value="1">1★</label>
+            <label><input type="checkbox" class="star" value="2">2★</label>
+            <label><input type="checkbox" class="star" value="3">3★</label>
+            <label><input type="checkbox" class="star" value="4">4★</label>
+            <label><input type="checkbox" class="star" value="5">5★</label>
+          </div>
+        </div>
+
+        <!-- places -->
+        <div data-actor="places" hidden>
+          <label for="city">City</label>
+          <input id="city" placeholder="Berlin">
+          <label for="categories">Categories (comma separated)</label>
+          <input id="categories" placeholder="dentist, restaurant">
+          <div class="row">
+            <div>
+              <label for="max_places">Max places</label>
+              <input id="max_places" type="number" min="1" placeholder="all">
+            </div>
+            <div>
+              <label for="workers">Workers</label>
+              <input id="workers" type="number" min="1" max="16" value="4">
+            </div>
+          </div>
+          <label for="gl">Region (gl)</label>
+          <input id="gl" value="us">
+        </div>
+
+        <!-- shared -->
+        <div class="row">
+          <div>
+            <label for="hl">Language (hl)</label>
+            <input id="hl" value="en">
+          </div>
+          <div>
+            <label for="delay">Delay (s)</label>
+            <input id="delay" type="number" step="0.1" min="0" max="10" value="0.3">
+          </div>
+        </div>
+        <label for="proxies">Proxies (one per line, optional)</label>
+        <textarea id="proxies" placeholder="http://user:pass@host:port"></textarea>
+        <div class="check">
+          <input type="checkbox" id="details" checked>
+          <label for="details" style="margin:0">Fetch business details + rating distribution</label>
+        </div>
+        <div class="check">
+          <input type="checkbox" id="autodl">
+          <label for="autodl" style="margin:0">Auto-download JSON when a run finishes</label>
+        </div>
+        <button class="primary" id="submit" type="submit">Start run</button>
+        <div class="msg" id="formMsg"></div>
+      </form>
+    </div>
+  </section>
+
+  <div style="display:grid; gap:20px">
+    <!-- ── runs ──────────────────────────────────────────── -->
+    <section class="card">
+      <h2>Runs</h2>
+      <div class="toolbar">
+        <button class="mini" id="refresh">Refresh</button>
+        <select id="filter" style="width:auto">
+          <option value="">all statuses</option>
+          <option value="RUNNING">running</option>
+          <option value="QUEUED">queued</option>
+          <option value="SUCCEEDED">succeeded</option>
+          <option value="FAILED">failed</option>
+        </select>
+        <span class="muted" id="runsInfo" style="font-size:12px"></span>
+      </div>
+      <div class="scroll">
+        <table>
+          <thead><tr>
+            <th>Run</th><th>Actor</th><th>Status</th><th>Progress</th><th>Started</th><th></th>
+          </tr></thead>
+          <tbody id="runs"><tr><td colspan="6" class="empty">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ── results ───────────────────────────────────────── -->
+    <section class="card">
+      <h2>Results</h2>
+      <div class="toolbar" id="resultsBar" hidden>
+        <strong class="mono" id="resTitle"></strong>
+        <span class="spacer" style="flex:1"></span>
+        <button class="mini" id="download">Download JSON</button>
+      </div>
+      <div id="resultsBody"><div class="empty">Select a finished run to view its records.</div></div>
+    </section>
+  </div>
+</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+// Google's review text carries literal <br> markup; show it as spacing, not tags.
+const escText = s => esc(String(s ?? "").replace(/<br\s*\/?>/gi, " ")).trim();
+
+let actor = "reviews";
+let selected = null;          // run id whose results are shown
+let lastStatus = {};          // run id -> status, to detect finish transitions
+let downloaded = new Set();   // ids already auto-downloaded
+
+/* ── api ─────────────────────────────────────────────── */
+function token() { return $("token").value.trim(); }
+
+async function api(path, opts = {}) {
+  const headers = Object.assign({}, opts.headers);
+  if (token()) headers["Authorization"] = "Bearer " + token();
+  if (opts.body) headers["Content-Type"] = "application/json";
+  const res = await fetch(path, Object.assign({}, opts, { headers }));
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { data = { detail: text }; }
+  if (!res.ok) {
+    const d = data && data.detail;
+    throw new Error(typeof d === "string" ? d : (d ? JSON.stringify(d) : `HTTP ${res.status}`));
+  }
+  return data;
+}
+
+/* ── health ──────────────────────────────────────────── */
+async function health() {
+  const el = $("health");
+  try {
+    const h = await (await fetch("/health")).json();
+    const note = h.auth_required ? "token required" : "no auth";
+    el.innerHTML = `<span class="dot" style="background:var(--ok)"></span> ` +
+      `${esc(h.executor)} · ${h.RUNNING || 0} running / ${h.QUEUED || 0} queued · ${note}`;
+  } catch {
+    el.innerHTML = `<span class="dot" style="background:var(--err)"></span> server unreachable`;
+  }
+}
+
+/* ── new run ─────────────────────────────────────────── */
+function setActor(next) {
+  actor = next;
+  $("tab-reviews").setAttribute("aria-selected", next === "reviews");
+  $("tab-places").setAttribute("aria-selected", next === "places");
+  document.querySelectorAll("[data-actor]").forEach(el => {
+    el.hidden = el.dataset.actor !== next;
+  });
+}
+$("tab-reviews").onclick = () => setActor("reviews");
+$("tab-places").onclick = () => setActor("places");
+
+function num(id) {
+  const v = $(id).value.trim();
+  return v === "" ? null : Number(v);
+}
+
+function buildInput() {
+  const proxies = $("proxies").value.split("\n").map(s => s.trim()).filter(Boolean);
+  const common = {
+    hl: $("hl").value.trim() || "en",
+    delay: Number($("delay").value || 0.3),
+    details: $("details").checked,
+  };
+  if (proxies.length) common.proxies = proxies;
+
+  if (actor === "reviews") {
+    const stars = [...document.querySelectorAll(".star:checked")].map(c => Number(c.value));
+    const input = Object.assign({ place: $("place").value.trim(), sort: $("sort").value }, common);
+    if (num("max_reviews") !== null) input.max_reviews = num("max_reviews");
+    if (stars.length) input.ratings = stars;
+    return input;
+  }
+  const input = Object.assign({
+    city: $("city").value.trim(),
+    categories: $("categories").value,
+    gl: $("gl").value.trim() || "us",
+    workers: Number($("workers").value || 4),
+  }, common);
+  if (num("max_places") !== null) input.max_places = num("max_places");
+  return input;
+}
+
+$("form").onsubmit = async e => {
+  e.preventDefault();
+  const msg = $("formMsg");
+  msg.className = "msg";
+  const input = buildInput();
+  if (actor === "reviews" && !input.place) return fail(msg, "Enter a place URL or id.");
+  if (actor === "places" && (!input.city || !input.categories.trim()))
+    return fail(msg, "Enter a city and at least one category.");
+
+  $("submit").disabled = true;
+  try {
+    const run = await api("/v1/runs", { method: "POST", body: JSON.stringify({ actor, input }) });
+    msg.className = "msg ok";
+    msg.textContent = `Run ${run.id} queued.`;
+    await loadRuns();
+  } catch (err) {
+    fail(msg, err.message);
+  } finally {
+    $("submit").disabled = false;
+  }
+};
+function fail(el, text) { el.className = "msg err"; el.textContent = text; }
+
+/* ── runs table ──────────────────────────────────────── */
+function progressText(run) {
+  const p = run.progress || {};
+  if (run.actor === "reviews") {
+    if (p.reviews == null) return "—";
+    return `${p.reviews.toLocaleString()} reviews · page ${p.page ?? "?"}`;
+  }
+  if (p.count == null && !p.stage) return "—";
+  return `${esc(p.stage || "")}${p.label ? " · " + esc(p.label) : ""}${p.count != null ? " · " + p.count : ""}`;
+}
+
+function summarise(run) {
+  const i = run.input || {};
+  return run.actor === "reviews"
+    ? (i.place || "").replace(/^https?:\/\/(www\.)?/, "").slice(0, 46)
+    : `${i.city} · ${(i.categories || []).join(", ")}`.slice(0, 46);
+}
+
+const FINISHED = ["SUCCEEDED", "FAILED", "TIMED_OUT", "ABORTED"];
+
+async function loadRuns() {
+  let data;
+  try {
+    const q = $("filter").value ? `?status=${$("filter").value}` : "";
+    data = await api("/v1/runs" + q);
+  } catch (err) {
+    $("runs").innerHTML = `<tr><td colspan="6" class="empty">${esc(err.message)}</td></tr>`;
+    return;
+  }
+  $("runsInfo").textContent = `${data.total} total`;
+
+  if (!data.items.length) {
+    $("runs").innerHTML = `<tr><td colspan="6" class="empty">No runs yet.</td></tr>`;
+    return;
+  }
+
+  $("runs").innerHTML = data.items.map(r => {
+    const when = r.started_at || r.created_at;
+    const time = when ? new Date(when).toLocaleTimeString() : "—";
+    const canAbort = r.status === "QUEUED" || r.status === "RUNNING";
+    return `<tr class="${r.id === selected ? "sel" : ""}">
+      <td><div class="mono">${esc(r.id)}</div>
+          <div class="muted" style="font-size:12px">${esc(summarise(r))}</div></td>
+      <td>${esc(r.actor)}</td>
+      <td><span class="badge b-${esc(r.status)}">${esc(r.status)}</span>
+          ${r.error ? `<div class="muted" style="font-size:11px" title="${esc(r.error)}">error</div>` : ""}</td>
+      <td class="muted">${progressText(r)}</td>
+      <td class="muted">${esc(time)}</td>
+      <td style="white-space:nowrap">
+        ${r.status === "SUCCEEDED" ? `<button class="mini" data-view="${r.id}">View</button>` : ""}
+        ${canAbort ? `<button class="mini" data-abort="${r.id}">Abort</button>` : ""}
+        ${FINISHED.includes(r.status) ? `<button class="mini" data-del="${r.id}">Delete</button>` : ""}
+      </td></tr>`;
+  }).join("");
+
+  // auto-download + auto-open on finish
+  for (const r of data.items) {
+    const prev = lastStatus[r.id];
+    if (prev && prev !== r.status && r.status === "SUCCEEDED") {
+      if (!selected) showResults(r.id);
+      if ($("autodl").checked && !downloaded.has(r.id)) {
+        downloaded.add(r.id);
+        downloadJson(r.id).catch(() => {});
+      }
+    }
+    lastStatus[r.id] = r.status;
+  }
+}
+
+document.addEventListener("click", async e => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  if (b.dataset.view) return showResults(b.dataset.view);
+  if (b.dataset.abort) {
+    await api(`/v1/runs/${b.dataset.abort}/abort`, { method: "POST" }).catch(err => alert(err.message));
+    return loadRuns();
+  }
+  if (b.dataset.del) {
+    await api(`/v1/runs/${b.dataset.del}`, { method: "DELETE" }).catch(err => alert(err.message));
+    if (selected === b.dataset.del) { selected = null; renderEmptyResults(); }
+    return loadRuns();
+  }
+});
+
+/* ── results ─────────────────────────────────────────── */
+function renderEmptyResults() {
+  $("resultsBar").hidden = true;
+  $("resultsBody").innerHTML = `<div class="empty">Select a finished run to view its records.</div>`;
+}
+
+function stars(n) { return "★".repeat(n || 0) + "☆".repeat(Math.max(0, 5 - (n || 0))); }
+
+function detailsBlock(d) {
+  if (!d) return "";
+  const dist = d.reviews_distribution;
+  let bars = "";
+  if (dist && dist.counts) {
+    const max = Math.max(...Object.values(dist.counts), 1);
+    bars = `<div class="bars">` + [5, 4, 3, 2, 1].map(s => {
+      const c = dist.counts[s] ?? dist.counts[String(s)] ?? 0;
+      return `<div class="bar"><span>${s}</span>
+        <span class="track"><span class="fill" style="width:${(c / max * 100).toFixed(1)}%"></span></span>
+        <span class="muted">${c.toLocaleString()}</span></div>`;
+    }).join("") + `</div>`;
+  }
+  return `<div style="padding:16px; border-bottom:1px solid var(--line)">
+    <dl class="kv">
+      <dt>Name</dt><dd>${esc(d.name)}</dd>
+      ${d.address ? `<dt>Address</dt><dd>${esc(d.address)}</dd>` : ""}
+      ${d.phone ? `<dt>Phone</dt><dd>${esc(d.phone)}</dd>` : ""}
+      ${d.website ? `<dt>Website</dt><dd><a href="${esc(d.website)}" target="_blank" rel="noopener">${esc(d.website_domain || d.website)}</a></dd>` : ""}
+      ${d.rating ? `<dt>Rating</dt><dd><b>${d.rating}</b> · ${(d.total_reviews || 0).toLocaleString()} reviews</dd>` : ""}
+    </dl>${bars}</div>`;
+}
+
+function reviewsTable(items) {
+  return `<table><thead><tr><th>Rating</th><th>Author</th><th>Date</th><th>Review</th></tr></thead><tbody>` +
+    items.map(r => `<tr>
+      <td style="white-space:nowrap; color:#f59e0b">${stars(r.rating)}</td>
+      <td>${esc(r.author && r.author.name)}
+        ${r.owner_response ? `<div class="muted" style="font-size:11px">owner replied</div>` : ""}</td>
+      <td class="muted" style="white-space:nowrap">${esc((r.published_at || "").slice(0, 10) || r.published_relative || "")}</td>
+      <td><div class="clip">${escText(r.text)}</div></td>
+    </tr>`).join("") + `</tbody></table>`;
+}
+
+function placesTable(items) {
+  return `<table><thead><tr><th>Name</th><th>Address</th><th>Phone</th><th>Website</th><th>Rating</th></tr></thead><tbody>` +
+    items.map(p => `<tr>
+      <td>${esc(p.name)}<div class="muted" style="font-size:11px">${esc((p.categories || []).join(", "))}</div></td>
+      <td class="muted">${esc(p.address)}</td>
+      <td class="muted">${esc(p.phone || "")}</td>
+      <td>${p.website ? `<a href="${esc(p.website)}" target="_blank" rel="noopener">${esc(p.website_domain || "link")}</a>` : ""}</td>
+      <td style="white-space:nowrap">${p.rating ?? "—"} <span class="muted">(${(p.total_reviews || 0).toLocaleString()})</span></td>
+    </tr>`).join("") + `</tbody></table>`;
+}
+
+async function showResults(id) {
+  selected = id;
+  $("resultsBar").hidden = false;
+  $("resTitle").textContent = id;
+  $("resultsBody").innerHTML = `<div class="empty">Loading records…</div>`;
+  try {
+    const run = await api(`/v1/runs/${id}`);
+    const page = await api(`/v1/runs/${id}/items?limit=500`);
+    const items = page.items || [];
+    let head = "";
+    if (run.actor === "reviews") {
+      const full = await api(`/v1/runs/${id}/results`);
+      head = detailsBlock(full && full.place_details);
+    }
+    const shown = items.length < page.total
+      ? `<div class="muted" style="padding:10px 16px; font-size:12px">
+           Showing first ${items.length.toLocaleString()} of ${page.total.toLocaleString()} records — download the JSON for all.
+         </div>` : "";
+    $("resultsBody").innerHTML = head + shown +
+      (items.length
+        ? `<div class="scroll">${run.actor === "reviews" ? reviewsTable(items) : placesTable(items)}</div>`
+        : `<div class="empty">This run returned no records.</div>`);
+    loadRuns();
+  } catch (err) {
+    $("resultsBody").innerHTML = `<div class="empty">${esc(err.message)}</div>`;
+  }
+}
+
+async function downloadJson(id) {
+  const data = await api(`/v1/runs/${id}/results`);
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${id}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+$("download").onclick = () => selected && downloadJson(selected).catch(e => alert(e.message));
+
+/* ── boot ────────────────────────────────────────────── */
+$("token").value = localStorage.getItem("rf_token") || "";
+$("autodl").checked = localStorage.getItem("rf_autodl") === "1";
+$("autodl").onchange = () => localStorage.setItem("rf_autodl", $("autodl").checked ? "1" : "0");
+$("saveToken").onclick = () => {
+  localStorage.setItem("rf_token", token());
+  health(); loadRuns();
+};
+$("refresh").onclick = loadRuns;
+$("filter").onchange = loadRuns;
+
+health(); loadRuns();
+setInterval(() => { health(); loadRuns(); }, 2500);
+</script>
+</body>
+</html>
