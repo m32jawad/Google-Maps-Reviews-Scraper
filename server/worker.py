@@ -37,7 +37,33 @@ class ProgressWriter:
         self.db.commit()
 
 
-def run_actor(run, progress):
+class ItemWriter:
+    """Appends each page's reviews to run_item so the API can serve them mid-run.
+
+    Deliberately unthrottled (unlike progress): the point is that a consumer
+    sees reviews as they are found. One insert batch + commit per page keeps
+    that cheap. Failures are swallowed -- these rows are a convenience, the
+    run's final `result` is what actually matters.
+    """
+
+    def __init__(self, db, run):
+        self.db, self.run = db, run
+        self.seq = 0
+
+    def __call__(self, items):
+        from .models import RunItem
+        try:
+            self.db.add_all([RunItem(run_id=self.run.id, seq=self.seq + i, data=item)
+                             for i, item in enumerate(items)])
+            self.db.commit()
+            self.seq += len(items)
+        except Exception as e:
+            log.warning("run %s: could not store %d partial items: %s",
+                        self.run.id, len(items), e)
+            self.db.rollback()
+
+
+def run_actor(run, progress, items=None):
     inp = dict(run.input)
     proxies = _proxies(inp.pop("proxies", None))
 
@@ -51,6 +77,7 @@ def run_actor(run, progress):
             details=inp.get("details", True),
             on_progress=lambda count, page: progress(
                 {"reviews": count, "page": page}),
+            on_items=items,
         )
 
     if run.actor == "places":
@@ -80,7 +107,7 @@ def main():
         log.info("run %s: actor=%s input=%s", run.id, run.actor, run.input)
 
         try:
-            result = run_actor(run, ProgressWriter(db, run))
+            result = run_actor(run, ProgressWriter(db, run), ItemWriter(db, run))
             # The scheduler may have flipped the status (abort) while we worked;
             # only a still-RUNNING run gets to succeed.
             db.refresh(run)

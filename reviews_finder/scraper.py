@@ -1,5 +1,6 @@
 """Orchestrator: place reference -> all reviews."""
 import json
+import logging
 import os
 import time
 
@@ -7,6 +8,8 @@ from .details import fetch_place_details
 from .fetcher import ProxyPool, SORT_ORDERS, fetch_page, make_review_session
 from .parser import parse_review
 from .resolver import resolve_feature_id
+
+log = logging.getLogger(__name__)
 
 
 def rating_distribution(reviews, total_reviews=None):
@@ -127,7 +130,8 @@ def _save_state(state_path, feature_id, sort, ratings_key, next_token, page):
 
 def scrape_reviews(place, sort="newest", max_reviews=None, hl="en",
                    delay=0.3, raw=False, on_progress=None, proxies=None,
-                   checkpoint=None, resume=False, ratings=None, details=True):
+                   checkpoint=None, resume=False, ratings=None, details=True,
+                   on_items=None):
     """Scrape reviews for a Google Maps place.
 
     place       -- place URL, maps.app.goo.gl link, ChIJ.. place id, or 0x..:0x.. feature id
@@ -148,6 +152,11 @@ def scrape_reviews(place, sort="newest", max_reviews=None, hl="en",
                    sort="newest" with this for a complete low-star set, since
                    rating-sorted views are capped by Google at ~800 reviews
     details     -- also fetch business details (address, phone, website, ...)
+    on_items    -- optional callback(new_reviews) fired once per page with just
+                   the reviews that page contributed (already rating-filtered).
+                   Lets a caller stream results out while the scrape is still
+                   running; never called with an empty list, and an exception
+                   from it is logged and swallowed rather than killing the run
     """
     ratings = set(ratings) if ratings else None
     ratings_key = sorted(ratings) if ratings else None
@@ -203,6 +212,7 @@ def scrape_reviews(place, sort="newest", max_reviews=None, hl="en",
                 break
 
             new_seen = 0
+            kept_before = len(reviews)
             for raw_review in raw_reviews:
                 parsed = parse_review(raw_review)
                 if parsed is None or parsed["review_id"] in seen_ids:
@@ -223,6 +233,13 @@ def scrape_reviews(place, sort="newest", max_reviews=None, hl="en",
                 partial_file.flush()
             if state_path and next_token:
                 _save_state(state_path, feature_id, sort, ratings_key, next_token, page_num)
+
+            new_items = reviews[kept_before:]
+            if on_items and new_items:
+                try:
+                    on_items(new_items)
+                except Exception as e:  # a broken consumer must not abort the scrape
+                    log.warning("on_items callback failed on page %s: %s", page_num, e)
 
             if on_progress:
                 on_progress(len(reviews), page_num)

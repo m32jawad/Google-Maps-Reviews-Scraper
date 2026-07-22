@@ -5,7 +5,8 @@
   GET    /v1/runs/{id}          status + progress
   POST   /v1/runs/{id}/abort    stop a queued/running run
   GET    /v1/runs/{id}/results  full result JSON (once SUCCEEDED)
-  GET    /v1/runs/{id}/items    just the items (reviews/places), paginated
+  GET    /v1/runs/{id}/items    just the items (reviews/places), paginated;
+                                also serves partial items of a RUNNING run
   DELETE /v1/runs/{id}          delete a finished run
   GET    /health                liveness + queue stats (no auth)
 
@@ -23,7 +24,7 @@ from pydantic import ValidationError
 
 from . import settings
 from .db import SessionLocal, init_db
-from .models import FINISHED, Run
+from .models import FINISHED, Run, RunItem
 from .schemas import CreateRun
 from .scheduler import Scheduler
 
@@ -129,10 +130,20 @@ def run_results(run_id: str, db=Depends(get_db)):
 @app.get("/v1/runs/{run_id}/items", dependencies=[Depends(require_auth)])
 def run_items(run_id: str, offset: int = 0,
               limit: int = Query(default=1000, le=10000), db=Depends(get_db)):
-    """Paginated access to the run's item list (reviews or places)."""
+    """Paginated access to the run's item list (reviews or places).
+
+    Unlike /results this also answers for an unfinished run, serving whatever
+    the worker has streamed into run_item so far so a caller can render
+    reviews while the scrape is still going. `total` therefore grows between
+    calls until the run finishes; once it SUCCEEDED the complete `result` takes
+    over as the answer, which is the authoritative and fully sorted set.
+    """
     run = get_run(run_id, db)
     if run.status != "SUCCEEDED":
-        raise HTTPException(409, f"run is {run.status}, results exist only for SUCCEEDED runs")
+        q = db.query(RunItem).filter(RunItem.run_id == run.id)
+        rows = q.order_by(RunItem.seq).offset(offset).limit(limit).all()
+        return {"total": q.count(), "offset": offset,
+                "items": [r.data for r in rows]}
     key = "reviews" if run.actor == "reviews" else "places"
     items = (run.result or {}).get(key) or []
     return {"total": len(items), "offset": offset,

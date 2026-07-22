@@ -61,7 +61,7 @@ Auth: every `/v1/*` request needs `Authorization: Bearer <API_TOKEN>`
 | GET | `/v1/runs/{id}` | status + live progress |
 | POST | `/v1/runs/{id}/abort` | stop a queued/running run |
 | GET | `/v1/runs/{id}/results` | full result JSON (SUCCEEDED only) |
-| GET | `/v1/runs/{id}/items` | just the reviews/places array, `?offset=&limit=` |
+| GET | `/v1/runs/{id}/items` | just the reviews/places array, `?offset=&limit=`; also returns what a still-RUNNING run has found so far |
 | DELETE | `/v1/runs/{id}` | delete a finished run (results live in the DB — clean up periodically) |
 | GET | `/health` | liveness + queue counts + `auth_required` |
 | GET | `/` | browser console (redirects to `/ui/`) |
@@ -125,6 +125,12 @@ curl -H "Authorization: Bearer $TOKEN" https://scraper.example.com/v1/runs/<id>/
 `place_details`, `rating_distribution`, etc.); `/items` is the paginated
 shortcut to just the array — use it from mapnovi-web like Apify's
 `datasets/{id}/items`.
+
+`/items` also answers *during* a run: the worker writes each page's reviews
+into `run_item` as they are found, so polling `/items` alongside `/v1/runs/{id}`
+lets a funnel show reviews while the scrape is still going. `total` grows with
+every page until the run finishes; once it is `SUCCEEDED` the endpoint switches
+to the complete `result` set, which is the authoritative one.
 
 ## Deploy (Docker)
 

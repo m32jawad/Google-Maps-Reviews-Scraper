@@ -29,6 +29,9 @@ if settings.DATABASE_URL.startswith("sqlite"):
         cur = dbapi_conn.cursor()
         cur.execute("PRAGMA journal_mode=WAL")
         cur.execute("PRAGMA synchronous=NORMAL")
+        # Off by default in SQLite; without it deleting a run would leave its
+        # run_item rows behind (Postgres enforces ON DELETE CASCADE natively).
+        cur.execute("PRAGMA foreign_keys=ON")
         cur.close()
 
 

@@ -1,9 +1,11 @@
-"""The one shared table: a scrape run (Apify's "actor run" equivalent)."""
+"""The shared tables: a scrape run (Apify's "actor run" equivalent) and the
+items a still-running run has produced so far."""
 import secrets
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, DateTime, Integer, String, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import (JSON, DateTime, ForeignKey, Integer, String, Text,
+                        UniqueConstraint)
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
 
@@ -47,6 +49,9 @@ class Run(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    items: Mapped[list["RunItem"]] = relationship(
+        back_populates="run", cascade="all, delete-orphan", passive_deletes=True)
+
     def to_dict(self, include_result=False):
         d = {
             "id": self.id,
@@ -64,3 +69,25 @@ class Run(Base):
         if include_result:
             d["result"] = self.result
         return d
+
+
+class RunItem(Base):
+    """One item a worker has already found, written mid-run.
+
+    Only exists so consumers can read reviews while the run is still RUNNING;
+    the finished run's `result` stays the authoritative, complete set, so these
+    rows are best-effort and may lag the true count by a page.
+    """
+
+    __tablename__ = "run_item"
+    __table_args__ = (UniqueConstraint("run_id", "seq", name="uq_run_item_seq"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("run.id", ondelete="CASCADE"), index=True)
+    # Position of the item within the run, so pagination is stable and the
+    # worker can append without ever reading back what it already wrote.
+    seq: Mapped[int] = mapped_column(Integer)
+    data: Mapped[dict] = mapped_column(JSON)
+
+    run: Mapped["Run"] = relationship(back_populates="items")
