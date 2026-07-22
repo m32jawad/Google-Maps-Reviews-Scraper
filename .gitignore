@@ -7,3 +7,4 @@ server/__pycache__/
 runs.db
 runs.db-*
 out/
+.env.me
