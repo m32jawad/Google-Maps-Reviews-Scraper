@@ -227,6 +227,60 @@ Caveats, all verified against the live endpoint:
 - **`opening_hours` usually holds only the current day** — that is all this
   endpoint returns; some places (hotels) return none at all.
 
+## Checking a single review (deleted or still live?)
+
+Given a review permalink, `check.py` / `check_review()` says whether that review
+still exists and, if it does, returns its current details — author, rating,
+text, images, owner response, timestamps. Same endpoint, same `requests`-only
+approach, no browser.
+
+```
+python check.py "https://www.google.com/maps/reviews/data=!4m8!14m7!1m6!2m5!1sCi9DQUlR…!2m1!1s0x0:0x488905669cd05b1a"
+python check.py "<review url>" --text "3 mal da gewesen 3 mal wurden bestellte Sachen"
+python check.py --file order-reviews.json --out status.json
+```
+
+```python
+from reviews_finder import check_review
+
+check_review(review_url, text=known_text)
+# {'review_id': 'ChZDSUhN…', 'feature_id': '0x0:0x4889…', 'status': 'exists',
+#  'exists': True, 'method': 'search', 'pages_fetched': 1, 'error': None,
+#  'review': {'rating': 1, 'text': '…', 'author': {…}, 'images': [...],
+#             'owner_response': {…}, 'published_at': '2023-01-24T11:38:51Z', …}}
+```
+
+`status` is `exists`, `deleted`, or `unknown` — **never treat `unknown` as a
+deletion**; it means the check could not reach a verdict (rate limit, capped
+scan, place returned nothing).
+
+How it decides, cheapest route first:
+
+1. **Search** — the review-list request has a free-text filter slot (slot 24,
+   the "Search reviews" box in Maps). Querying the first ten words of the
+   review's own text usually returns that single review in **one request**.
+   Measured 24/25 one-request hits on a 3 000-review place; the miss was a
+   review whose entire text was the word "Gut".
+2. **Scan** — page through the place (60 reviews/request) matching on
+   `review_id`. Used when no text is known, and always before declaring a
+   review deleted, since a search miss alone is not proof.
+
+Practical consequences:
+
+- **Store the review text when you first scrape it.** With it, a recheck costs
+  one request; without it, it costs a full pass over the place.
+- **Rating-only reviews can never be found by search** (the filter matches
+  review text, not author names) — they always take the scan route. On the
+  place tested, 1 584 of 3 000 reviews had no text.
+- **Check in batches per place.** `check_reviews([...])` searches each review
+  individually, then resolves everything still unaccounted for in a *single*
+  pass over the place instead of one pass per review.
+- **A review URL is enough input on its own** — it carries both the review id
+  (`!1s…`) and the place as `0x0:0x<id>`, a short feature id form the endpoint
+  accepts. `--place` is only needed for bare review ids.
+- Search hits come back with matched words wrapped in `<b>…</b>`; that markup
+  is stripped, so `review["text"]` matches a plain scrape byte for byte.
+
 ## Output shape
 
 ```json

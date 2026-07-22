@@ -51,24 +51,41 @@ class ProxyPool:
         self._i += 1
 
 
-def build_page_url(feature_id, sort=2, token="", hl="en", page_size=MAX_PAGE_SIZE):
-    # reqpld mirrors what the Maps frontend sends: the review-list request lives
-    # at reqpld[1][9]; slot 1 is the sort order, slot 9 the page size, slot 11
-    # the feature id, slot 19 the pagination token (follow-up pages only).
-    if not token:
-        inner = [None, sort, None, None, None, None, None, None, None, page_size, None, [feature_id]]
-    else:
-        inner = [None, sort, None, None, None, None, None, None, None, page_size, None, [feature_id],
-                 None, None, None, None, None, None, None, token]
+# Slots inside the review-list request (reqpld[1][9]), as sent by the Maps
+# frontend. Anything past the last slot we set is left off entirely -- Google
+# rejects some over-long payloads with a 400.
+SORT_SLOT = 1
+PAGE_SIZE_SLOT = 9
+FEATURE_ID_SLOT = 11
+TOKEN_SLOT = 19          # follow-up pages only
+QUERY_SLOT = 24          # free-text search over review text ("Search reviews")
+
+
+def build_page_url(feature_id, sort=2, token="", hl="en", page_size=MAX_PAGE_SIZE,
+                   query=None):
+    last_slot = QUERY_SLOT if query else (TOKEN_SLOT if token else FEATURE_ID_SLOT)
+    inner = [None] * (last_slot + 1)
+    inner[SORT_SLOT] = sort
+    inner[PAGE_SIZE_SLOT] = page_size
+    inner[FEATURE_ID_SLOT] = [feature_id]
+    if token:
+        inner[TOKEN_SLOT] = token
+    if query:
+        inner[QUERY_SLOT] = query
     reqpld = [None, [None] * 9 + [inner]]
     payload = json.dumps(reqpld, separators=(",", ":"))
     return f"{ENDPOINT}?msc=gwsrpc&hl={hl}&reqpld={urllib.parse.quote(payload, safe='')}"
 
 
 def fetch_page(session, feature_id, sort=2, token="", hl="en", timeout=30, retries=5,
-               proxy_pool=None):
-    """Fetch one page. Returns (raw_reviews_list, next_token)."""
-    url = build_page_url(feature_id, sort=sort, token=token, hl=hl)
+               proxy_pool=None, query=None):
+    """Fetch one page. Returns (raw_reviews_list, next_token).
+
+    `query` restricts the page to reviews whose text matches it -- the same
+    filter as the "Search reviews" box in Maps. It only searches review text,
+    never author names, and reviews with no text can never match it.
+    """
+    url = build_page_url(feature_id, sort=sort, token=token, hl=hl, query=query)
     last_err = None
     rate_limited = False
     for attempt in range(retries + 1):
